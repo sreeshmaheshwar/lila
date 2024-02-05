@@ -97,7 +97,7 @@ object PuzzleTheme:
     PuzzleTheme.crushing,
     PuzzleTheme.master,
     PuzzleTheme.masterVsMaster
-  ).map(_.key)
+  )
  
   val frequency = Map[PuzzleTheme, Int](
     advantage -> 1114122,

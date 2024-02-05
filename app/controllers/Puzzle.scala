@@ -22,6 +22,7 @@ import lila.user.User
 import lila.common.LangPath
 import play.api.i18n.Lang
 import lila.rating.{ Perf, PerfType }
+import lila.puzzle.PuzzleTheme.Key
 
 final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
 
@@ -112,15 +113,35 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
     SmResponse(interval, repetitions, easeFactor)
   }
 
+  private def apply_sm2(elos: Map[Key, (Int, Int)]) =
+    val min = elos.values.map(_._1).min
+    val max = elos.values.map(_._1).max
+    // val norm = pp(elos map((k, (v, _)) => (k, (((v - min).toDouble / (max - min).toDouble) * 5).round.toInt)))
+    elos map((k, v) => {
+      val (r, nb) = v
+      val normalised = (((r - min).toDouble / (max - min).toDouble) * 5).round
+      (k, 9 - calculate_sm2(normalised.toInt, nb, 3, 2.5).interval)
+    }) pp
+
+  private def proportionallyRandomId[A](elos: Map[A, Int]) = {
+    val total = elos.values.sum
+    val random = scala.util.Random.nextInt(total)
+    var sum = 0
+    elos.find((k, v) => {
+      sum += v
+      sum >= random
+    }).get._1
+  }
+
   // TODO: limit retries + implement spaced repetition.
   private def nextPuzzleWithRetries(using me: Me, perf: Perf): Fu[Option[Puz]] = 
-    val theme = pp(PuzzleTheme.proportionallyRandomTheme)
+    val theme = pp(PuzzleTheme.proportionallyRandomTheme.key)
     getThemeRatings(env.puzzle.colls, me.userId, 100) map {
       case None => theme
       case Some(ratings) => 
-        if ratings.contains(theme.key) then PuzzleTheme.mix else theme
+        if ratings.contains(theme) then proportionallyRandomId(apply_sm2(ratings)) else theme
     } flatMap { x =>
-      env.puzzle.selector.nextPuzzleFor(PuzzleAngle(x pp)) flatMap { 
+      env.puzzle.selector.nextPuzzleFor(PuzzleAngle((PuzzleTheme(x)) pp)) flatMap { 
         case None => nextPuzzleWithRetries
         case puzzle => fuccess(puzzle)
       }
@@ -157,7 +178,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
     rating <- doc.double("rating")
   yield PuzzleDashboard.Results(nb, wins, fixes, rating.toInt)
 
-  private def getThemeRatings(colls: PuzzleColls, userId: UserId, days: Int): Fu[Option[Map[PuzzleTheme.Key, Int]]]  = colls.round {
+  private def getThemeRatings(colls: PuzzleColls, userId: UserId, days: Int): Fu[Option[Map[PuzzleTheme.Key, (Int, Int)]]]  = colls.round {
       _.aggregateOne() { framework =>
         import framework.*
         val resultsGroup = List(
@@ -197,7 +218,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
             themeStr <- doc.string("_id")
             theme    <- PuzzleTheme find themeStr
             results  <- readResults(doc)
-          yield theme.key -> results.puzzleRatingAvg
+          yield theme.key -> (results.puzzleRatingAvg, results.nb)
         yield byTheme.toMap
       }
     }
