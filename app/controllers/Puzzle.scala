@@ -77,12 +77,20 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
       _.fold(redirectNoPuzzle):
         renderShow(_, angle, langPath = LangPath(routes.Puzzle.home).some)
     }
+  
+  // TODO: limit retries + implement spaced repetition.
+  private def nextPuzzleWithRetries(using Me, Perf): Fu[Option[Puz]] = 
+    env.puzzle.selector.nextPuzzleFor(PuzzleAngle(PuzzleTheme.proportionallyRandomTheme pp)) flatMap { 
+      case None => nextPuzzleWithRetries
+      case puzzle => fuccess(puzzle)
+    }
 
   private def nextPuzzleForMe(
       angle: PuzzleAngle,
       color: Option[Option[Color]],
       difficulty: PuzzleDifficulty = PuzzleDifficulty.Normal
-  )(using ctx: Context): Fu[Option[Puz]] =
+  )(using ctx: Context): Fu[Option[Puz]] = 
+    pp("Puzzle Requested!")
     ctx.me match
       case Some(me) =>
         given Me = me
@@ -93,7 +101,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
             .so(env.puzzle.session.setDifficulty)
             >>
               color.so(env.puzzle.session.setAngleAndColor(angle, _)) >>
-              env.puzzle.selector.nextPuzzleFor(angle)
+              nextPuzzleWithRetries // TODO: support when user provided angle
       case None => env.puzzle.anon.getOneFor(angle, difficulty, ~color)
 
   private def redirectNoPuzzle: Fu[Result] =
@@ -280,7 +288,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
     env.puzzle.api.angles.flatMap: angles =>
       negotiate(
         html = Ok.page(views.html.puzzle.theme.list(angles)),
-        json = Ok(lila.puzzle.JsonView.angles(angles))
+        json = Ok(lila.puzzle.JsonView.angles(angles)).pp
       )
 
   def openings(order: String) = Open:

@@ -3,6 +3,8 @@ package lila.puzzle
 import lila.i18n.I18nKeys.{ puzzleTheme as i }
 import lila.i18n.{ I18nKey, I18nKeys as trans }
 
+import scala.util.control.Breaks.{break, breakable}
+
 case class PuzzleTheme(key: PuzzleTheme.Key, name: I18nKey, description: I18nKey)
 
 object PuzzleTheme:
@@ -79,6 +81,94 @@ object PuzzleTheme:
   val xRayAttack      = PuzzleTheme(Key("xRayAttack"), i.xRayAttack, i.xRayAttackDescription)
   val zugzwang        = PuzzleTheme(Key("zugzwang"), i.zugzwang, i.zugzwangDescription)
   val checkFirst      = PuzzleTheme(Key("checkFirst"), I18nKey("Check first"), I18nKey("Check first"))
+ 
+  val frequency = Map[PuzzleTheme, Int](
+    advantage -> 1114122,
+    anastasiaMate -> 3771,
+    arabianMate -> 3596,
+    attackingF2F7 -> 21543,
+    attraction -> 127076,
+    backRankMate -> 114855,
+    bishopEndgame -> 43387,
+    bodenMate -> 1443,
+    capturingDefender -> 31572,
+    castling -> 2005,
+    clearance -> 50730,
+    crushing -> 1633978,
+    defensiveMove -> 225694,
+    deflection -> 156856,
+    advancedPawn -> 204065,
+    discoveredAttack -> 209840,
+    doubleBishopMate -> 1524,
+    doubleCheck -> 17445,
+    dovetailMate -> 1803,
+    enPassant -> 5469,
+    endgame -> 1711180,
+    equality -> 42282,
+    exposedKing -> 100602,
+    fork -> 535211,
+    hangingPiece -> 160635,
+    hookMate -> 5161,
+    interference -> 14820,
+    intermezzo -> 53247,
+    kingsideAttack -> 289540,
+    knightEndgame -> 27976,
+    long -> 920624,
+    master -> 269971,
+    masterVsMaster -> 25059,
+    mate -> 915928,
+    mateIn1 -> 358723,
+    mateIn2 -> 432833,
+    mateIn3 -> 105864,
+    mateIn4 -> 15192,
+    mateIn5 -> 3316,
+    middlegame -> 1787974,
+    oneMove -> 405488,
+    opening -> 210061,
+    pawnEndgame -> 105522,
+    pin -> 237755,
+    promotion -> 76801,
+    queenEndgame -> 33873,
+    queenRookEndgame -> 24052,
+    queensideAttack -> 49786,
+    quietMove -> 145702,
+    rookEndgame -> 174835,
+    sacrifice -> 263423,
+    short -> 2085189,
+    skewer -> 81626,
+    smotheredMate -> 10284,
+    superGM -> 2293,
+    // superGM -> 3000000, // Uncomment to test retries.
+    trappedPiece -> 54438,
+    underPromotion -> 673,
+    veryLong -> 295012,
+    xRayAttack -> 12669,
+    zugzwang -> 29968
+    // `mix` and `checkFirst` are not present in our database.
+  ).toMap
+
+  val total = frequency.values.sum
+
+  val random = new scala.util.Random
+
+  def proportionallyRandomTheme: PuzzleTheme = {
+    val x = random.nextInt(total)
+    var offset = 0
+    var result = mix
+  
+    breakable {
+      for ((theme, f) <- frequency) {
+        offset = offset + f
+        if (x < offset) {
+          result = theme
+          break()
+        }
+      }
+    }
+    
+    assert(result != mix)
+    result
+  }
 
   val categorized = List[(I18nKey, List[PuzzleTheme])](
     trans.puzzle.recommended -> List(
