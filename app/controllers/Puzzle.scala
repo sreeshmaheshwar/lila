@@ -1,9 +1,14 @@
 package controllers
 
+import reactivemongo.api.bson.BSONNull
+
+import lila.db.dsl.{ *, given }
+import lila.memo.CacheApi
 import chess.Color
 import play.api.data.Form
 import play.api.libs.json.*
 import play.api.mvc.*
+
 import scala.util.chaining.*
 import views.*
 
@@ -12,7 +17,7 @@ import lila.common.ApiVersion
 import lila.common.Json.given
 import lila.common.config.MaxPerSecond
 import lila.puzzle.PuzzleForm.RoundData
-import lila.puzzle.{ Puzzle as Puz, PuzzleAngle, PuzzleSettings, PuzzleStreak, PuzzleTheme, PuzzleDifficulty }
+import lila.puzzle.{ Puzzle as Puz, PuzzleAngle, PuzzleSettings, PuzzleStreak, PuzzleTheme, PuzzleDifficulty, PuzzleColls, PuzzleDashboard, PuzzleRound }
 import lila.user.User
 import lila.common.LangPath
 import play.api.i18n.Lang
@@ -85,6 +90,83 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
       case puzzle => fuccess(puzzle)
     }
 
+  private def countField(field: String) = $doc("$cond" -> $arr("$" + field, 1, 0))
+
+  val irrelevantThemes = List(
+    PuzzleTheme.oneMove,
+    PuzzleTheme.short,
+    PuzzleTheme.long,
+    PuzzleTheme.veryLong,
+    PuzzleTheme.mateIn1,
+    PuzzleTheme.mateIn2,
+    PuzzleTheme.mateIn3,
+    PuzzleTheme.mateIn4,
+    PuzzleTheme.mateIn5,
+    PuzzleTheme.equality,
+    PuzzleTheme.advantage,
+    PuzzleTheme.crushing,
+    PuzzleTheme.master,
+    PuzzleTheme.masterVsMaster
+  ).map(_.key)
+
+  val relevantThemes = PuzzleTheme.visible collect {
+    case t if !irrelevantThemes.contains(t.key) => t.key
+  }
+
+  val relevantThemesSelect = $doc("puzzle.themes" $nin irrelevantThemes)
+
+  private def readResults(doc: Bdoc) = for
+    nb     <- doc.int("nb")
+    wins   <- doc.int("wins")
+    fixes  <- doc.int("fixes")
+    rating <- doc.double("rating")
+  yield PuzzleDashboard.Results(nb, wins, fixes, rating.toInt)
+
+  private def getThemeRatings(colls: PuzzleColls, userId: UserId, days: Int): Fu[Option[Map[PuzzleTheme.Key, Int]]]  = colls.round {
+      _.aggregateOne() { framework =>
+        import framework.*
+        val resultsGroup = List(
+          "nb"     -> SumAll,
+          "wins"   -> Sum(countField("w")),
+          "fixes"  -> Sum(countField("f")),
+          "rating" -> AvgField("puzzle.rating")
+        )
+        Match($doc("u" -> userId, "d" $gt nowInstant.minusDays(days))) -> List(
+          Sort(Descending("d")),
+          Limit(10_000),
+          PipelineOperator(
+            PuzzleRound.puzzleLookup(
+              colls,
+              List($doc("$project" -> $doc("themes" -> true, "rating" -> "$glicko.r")))
+            )
+          ),
+          Unwind("puzzle"),
+          Facet(
+            List(
+              "global" -> List(Group(BSONNull)(resultsGroup*)),
+              "byTheme" -> List(
+                Unwind("puzzle.themes"),
+                Match(relevantThemesSelect),
+                GroupField("puzzle.themes")(resultsGroup*)
+              )
+            )
+          )
+        )
+      }
+      .map { r =>
+        for
+          result     <- r
+          themeDocs  <- result.getAsOpt[List[Bdoc]]("byTheme")
+          byTheme = for
+            doc      <- themeDocs
+            themeStr <- doc.string("_id")
+            theme    <- PuzzleTheme find themeStr
+            results  <- readResults(doc)
+          yield theme.key -> results.puzzleRatingAvg
+        yield byTheme.toMap
+      }
+    }
+
   private def nextPuzzleForMe(
       angle: PuzzleAngle,
       color: Option[Option[Color]],
@@ -93,6 +175,11 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
     pp("Puzzle Requested!")
     ctx.me match
       case Some(me) =>
+        // Print the user's per-theme ratings.
+        println("\t\t\tRATING MAP!")
+        getThemeRatings(env.puzzle.colls, me.userId, 100)
+          .map(println(_))
+
         given Me = me
         WithPuzzlePerf:
           ctx.req.session
