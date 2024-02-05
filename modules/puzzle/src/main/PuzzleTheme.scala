@@ -81,6 +81,23 @@ object PuzzleTheme:
   val xRayAttack      = PuzzleTheme(Key("xRayAttack"), i.xRayAttack, i.xRayAttackDescription)
   val zugzwang        = PuzzleTheme(Key("zugzwang"), i.zugzwang, i.zugzwangDescription)
   val checkFirst      = PuzzleTheme(Key("checkFirst"), I18nKey("Check first"), I18nKey("Check first"))
+
+  val irrelevantThemes = List(
+    PuzzleTheme.oneMove,
+    PuzzleTheme.short,
+    PuzzleTheme.long,
+    PuzzleTheme.veryLong,
+    PuzzleTheme.mateIn1,
+    PuzzleTheme.mateIn2,
+    PuzzleTheme.mateIn3,
+    PuzzleTheme.mateIn4,
+    PuzzleTheme.mateIn5,
+    PuzzleTheme.equality,
+    PuzzleTheme.advantage,
+    PuzzleTheme.crushing,
+    PuzzleTheme.master,
+    PuzzleTheme.masterVsMaster
+  ).map(_.key)
  
   val frequency = Map[PuzzleTheme, Int](
     advantage -> 1114122,
@@ -145,7 +162,7 @@ object PuzzleTheme:
     xRayAttack -> 12669,
     zugzwang -> 29968
     // `mix` and `checkFirst` are not present in our database.
-  ).toMap
+  ).toMap.filterNot(x => irrelevantThemes.contains(x._1))
 
   val total = frequency.values.sum
 

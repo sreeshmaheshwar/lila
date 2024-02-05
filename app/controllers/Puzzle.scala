@@ -84,11 +84,19 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
     }
   
   // TODO: limit retries + implement spaced repetition.
-  private def nextPuzzleWithRetries(using Me, Perf): Fu[Option[Puz]] = 
-    env.puzzle.selector.nextPuzzleFor(PuzzleAngle(PuzzleTheme.proportionallyRandomTheme pp)) flatMap { 
+  private def nextPuzzleWithRetries(using me: Me, perf: Perf): Fu[Option[Puz]] = 
+    val theme = pp(PuzzleTheme.proportionallyRandomTheme)
+    getThemeRatings(env.puzzle.colls, me.userId, 100) map {
+      case None => theme
+      case Some(ratings) => 
+        if ratings.contains(theme.key) then sm2 else theme
+    } flatMap { x =>
+    env.puzzle.selector.nextPuzzleFor(PuzzleAngle(x pp)) flatMap { 
       case None => nextPuzzleWithRetries
       case puzzle => fuccess(puzzle)
     }
+}
+  private def sm2: PuzzleTheme = PuzzleTheme.mix
 
   private def countField(field: String) = $doc("$cond" -> $arr("$" + field, 1, 0))
 
