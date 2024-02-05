@@ -218,7 +218,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
             themeStr <- doc.string("_id")
             theme    <- PuzzleTheme find themeStr
             results  <- readResults(doc)
-          yield theme.key -> (results.puzzleRatingAvg, results.nb)
+          yield theme.key -> (results.performance, results.nb)
         yield byTheme.toMap
       }
     }
