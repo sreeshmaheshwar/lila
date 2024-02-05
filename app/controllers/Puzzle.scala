@@ -83,21 +83,48 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
         renderShow(_, angle, langPath = LangPath(routes.Puzzle.home).some)
     }
   
+  case class SmResponse(interval: Int, repetitions: Int, easeFactor: Double)
+
+  def calculate_sm2(quality: Int, repetitionsOriginal: Int, previousInterval: Int, previousEaseFactor: Double) = {
+    var interval: Int = 0
+    var easeFactor: Double = 0.0
+    var repetitions: Int = repetitionsOriginal
+
+    if (quality >= 3) {
+      repetitions match {
+        case 0 => interval = 1
+        case 1 => interval = 6
+        case _ => interval = (previousInterval * previousEaseFactor).round.toInt
+      }
+
+      repetitions += 1
+      easeFactor = previousEaseFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+    } else {
+      repetitions = 0
+      interval = 1
+      easeFactor = previousEaseFactor
+    }
+
+    if (easeFactor < 1.3) {
+      easeFactor = 1.3
+    }
+
+    SmResponse(interval, repetitions, easeFactor)
+  }
+
   // TODO: limit retries + implement spaced repetition.
   private def nextPuzzleWithRetries(using me: Me, perf: Perf): Fu[Option[Puz]] = 
     val theme = pp(PuzzleTheme.proportionallyRandomTheme)
     getThemeRatings(env.puzzle.colls, me.userId, 100) map {
       case None => theme
       case Some(ratings) => 
-        if ratings.contains(theme.key) then sm2 else theme
+        if ratings.contains(theme.key) then PuzzleTheme.mix else theme
     } flatMap { x =>
-    env.puzzle.selector.nextPuzzleFor(PuzzleAngle(x pp)) flatMap { 
-      case None => nextPuzzleWithRetries
-      case puzzle => fuccess(puzzle)
+      env.puzzle.selector.nextPuzzleFor(PuzzleAngle(x pp)) flatMap { 
+        case None => nextPuzzleWithRetries
+        case puzzle => fuccess(puzzle)
+      }
     }
-}
-  private def sm2: PuzzleTheme = PuzzleTheme.mix
-
   private def countField(field: String) = $doc("$cond" -> $arr("$" + field, 1, 0))
 
   val irrelevantThemes = List(
