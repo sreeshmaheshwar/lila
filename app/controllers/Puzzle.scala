@@ -137,11 +137,14 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
   private def nextPuzzleWithRetries(using me: Me, perf: Perf): Fu[Option[Puz]] = 
     val theme = pp(PuzzleTheme.proportionallyRandomTheme.key)
     getThemeRatings(env.puzzle.colls, me.userId, 100) map {
-      case None => theme
+      case None => PuzzleAngle(PuzzleTheme(theme))
       case Some(ratings) => 
-        if ratings.contains(theme) then proportionallyRandomId(apply_sm2(ratings)) else theme
+        if ratings.contains(theme) then {
+          val newTheme = PuzzleTheme(proportionallyRandomId(apply_sm2(ratings)))
+          PuzzleAngle(newTheme, IntRating(ratings.get(newTheme.key).get._1))
+        } else PuzzleAngle(PuzzleTheme(theme))
     } flatMap { x =>
-      env.puzzle.selector.nextPuzzleFor(PuzzleAngle((PuzzleTheme(x)) pp)) flatMap { 
+      env.puzzle.selector.nextPuzzleFor(x pp) flatMap { 
         case None => nextPuzzleWithRetries
         case puzzle => fuccess(puzzle)
       }
