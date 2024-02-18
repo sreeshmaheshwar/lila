@@ -17,6 +17,7 @@ final private class PuzzleCountApi(
 
   def byAngle(angle: PuzzleAngle): Fu[Int] = angle match
     case PuzzleAngle.Theme(theme)    => byTheme(theme)
+    case PuzzleAngle.RatedTheme(theme, _)    => byTheme(theme)
     case PuzzleAngle.Opening(either) => openingApi.count(either)
 
   private val byThemeCache = cacheApi.unit[Map[PuzzleTheme.Key, Int]]:

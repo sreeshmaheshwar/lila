@@ -1,9 +1,14 @@
 package controllers
 
+import reactivemongo.api.bson.BSONNull
+
+import lila.db.dsl.{ *, given }
+import lila.memo.CacheApi
 import chess.Color
 import play.api.data.Form
 import play.api.libs.json.*
 import play.api.mvc.*
+
 import scala.util.chaining.*
 import views.*
 
@@ -12,11 +17,12 @@ import lila.common.ApiVersion
 import lila.common.Json.given
 import lila.common.config.MaxPerSecond
 import lila.puzzle.PuzzleForm.RoundData
-import lila.puzzle.{ Puzzle as Puz, PuzzleAngle, PuzzleSettings, PuzzleStreak, PuzzleTheme, PuzzleDifficulty }
+import lila.puzzle.{ Puzzle as Puz, PuzzleAngle, PuzzleSettings, PuzzleStreak, PuzzleTheme, PuzzleDifficulty, PuzzleColls, PuzzleDashboard, PuzzleRound }
 import lila.user.User
 import lila.common.LangPath
 import play.api.i18n.Lang
 import lila.rating.{ Perf, PerfType }
+import lila.puzzle.PuzzleTheme.Key
 
 final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
 
@@ -77,14 +83,162 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
       _.fold(redirectNoPuzzle):
         renderShow(_, angle, langPath = LangPath(routes.Puzzle.home).some)
     }
+  
+  case class SmResponse(interval: Int, repetitions: Int, easeFactor: Double)
+
+  def calculate_sm2(quality: Int, repetitionsOriginal: Int, previousInterval: Int, previousEaseFactor: Double) = {
+    var interval: Int = 0
+    var easeFactor: Double = 0.0
+    var repetitions: Int = repetitionsOriginal
+
+    if (quality >= 3) {
+      repetitions match {
+        case 0 => interval = 1
+        case 1 => interval = 6
+        case _ => interval = (previousInterval * previousEaseFactor).round.toInt
+      }
+
+      repetitions += 1
+      easeFactor = previousEaseFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+    } else {
+      repetitions = 0
+      interval = 1
+      easeFactor = previousEaseFactor
+    }
+
+    if (easeFactor < 1.3) {
+      easeFactor = 1.3
+    }
+
+    SmResponse(interval, repetitions, easeFactor)
+  }
+
+  private def apply_sm2(elos: Map[Key, (Int, Int)]) =
+    val min = elos.values.map(_._1).min
+    val max = elos.values.map(_._1).max
+    // val norm = pp(elos map((k, (v, _)) => (k, (((v - min).toDouble / (max - min).toDouble) * 5).round.toInt)))
+    elos map((k, v) => {
+      val (r, nb) = v
+      val normalised = (((r - min).toDouble / (max - min).toDouble) * 5).round
+      (k, 9 - calculate_sm2(normalised.toInt, nb, 3, 2.5).interval)
+    }) pp
+
+  private def proportionallyRandomId[A](elos: Map[A, Int]) = {
+    val total = elos.values.sum
+    val random = scala.util.Random.nextInt(total)
+    var sum = 0
+    elos.find((k, v) => {
+      sum += v
+      sum >= random
+    }).get._1
+  }
+
+  // TODO: limit retries + implement spaced repetition.
+  private def nextPuzzleWithRetries(using me: Me, perf: Perf): Fu[Option[Puz]] = 
+    val theme = pp(PuzzleTheme.proportionallyRandomTheme.key)
+    getThemeRatings(env.puzzle.colls, me.userId, 100) map {
+      case None => PuzzleAngle(PuzzleTheme(theme))
+      case Some(ratings) => 
+        if ratings.contains(theme) then {
+          val newTheme = PuzzleTheme(proportionallyRandomId(apply_sm2(ratings)))
+          PuzzleAngle(newTheme, IntRating(ratings.get(newTheme.key).get._1))
+        } else PuzzleAngle(PuzzleTheme(theme))
+    } flatMap { x =>
+      env.puzzle.selector.nextPuzzleFor(x pp) flatMap { 
+        case None => nextPuzzleWithRetries
+        case puzzle => fuccess(puzzle)
+      }
+    }
+  private def countField(field: String) = $doc("$cond" -> $arr("$" + field, 1, 0))
+
+  val irrelevantThemes = List(
+    PuzzleTheme.oneMove,
+    PuzzleTheme.short,
+    PuzzleTheme.long,
+    PuzzleTheme.veryLong,
+    PuzzleTheme.mateIn1,
+    PuzzleTheme.mateIn2,
+    PuzzleTheme.mateIn3,
+    PuzzleTheme.mateIn4,
+    PuzzleTheme.mateIn5,
+    PuzzleTheme.equality,
+    PuzzleTheme.advantage,
+    PuzzleTheme.crushing,
+    PuzzleTheme.master,
+    PuzzleTheme.masterVsMaster
+  ).map(_.key)
+
+  val relevantThemes = PuzzleTheme.visible collect {
+    case t if !irrelevantThemes.contains(t.key) => t.key
+  }
+
+  val relevantThemesSelect = $doc("puzzle.themes" $nin irrelevantThemes)
+
+  private def readResults(doc: Bdoc) = for
+    nb     <- doc.int("nb")
+    wins   <- doc.int("wins")
+    fixes  <- doc.int("fixes")
+    rating <- doc.double("rating")
+  yield PuzzleDashboard.Results(nb, wins, fixes, rating.toInt)
+
+  private def getThemeRatings(colls: PuzzleColls, userId: UserId, days: Int): Fu[Option[Map[PuzzleTheme.Key, (Int, Int)]]]  = colls.round {
+      _.aggregateOne() { framework =>
+        import framework.*
+        val resultsGroup = List(
+          "nb"     -> SumAll,
+          "wins"   -> Sum(countField("w")),
+          "fixes"  -> Sum(countField("f")),
+          "rating" -> AvgField("puzzle.rating")
+        )
+        Match($doc("u" -> userId, "d" $gt nowInstant.minusDays(days))) -> List(
+          Sort(Descending("d")),
+          Limit(10_000),
+          PipelineOperator(
+            PuzzleRound.puzzleLookup(
+              colls,
+              List($doc("$project" -> $doc("themes" -> true, "rating" -> "$glicko.r")))
+            )
+          ),
+          Unwind("puzzle"),
+          Facet(
+            List(
+              "global" -> List(Group(BSONNull)(resultsGroup*)),
+              "byTheme" -> List(
+                Unwind("puzzle.themes"),
+                Match(relevantThemesSelect),
+                GroupField("puzzle.themes")(resultsGroup*)
+              )
+            )
+          )
+        )
+      }
+      .map { r =>
+        for
+          result     <- r
+          themeDocs  <- result.getAsOpt[List[Bdoc]]("byTheme")
+          byTheme = for
+            doc      <- themeDocs
+            themeStr <- doc.string("_id")
+            theme    <- PuzzleTheme find themeStr
+            results  <- readResults(doc)
+          yield theme.key -> (results.performance, results.nb)
+        yield byTheme.toMap
+      }
+    }
 
   private def nextPuzzleForMe(
       angle: PuzzleAngle,
       color: Option[Option[Color]],
       difficulty: PuzzleDifficulty = PuzzleDifficulty.Normal
-  )(using ctx: Context): Fu[Option[Puz]] =
+  )(using ctx: Context): Fu[Option[Puz]] = 
+    pp("Puzzle Requested!")
     ctx.me match
       case Some(me) =>
+        // Print the user's per-theme ratings.
+        println("\t\t\tRATING MAP!")
+        getThemeRatings(env.puzzle.colls, me.userId, 100)
+          .map(println(_))
+
         given Me = me
         WithPuzzlePerf:
           ctx.req.session
@@ -93,7 +247,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
             .so(env.puzzle.session.setDifficulty)
             >>
               color.so(env.puzzle.session.setAngleAndColor(angle, _)) >>
-              env.puzzle.selector.nextPuzzleFor(angle)
+              nextPuzzleWithRetries // TODO: support when user provided angle
       case None => env.puzzle.anon.getOneFor(angle, difficulty, ~color)
 
   private def redirectNoPuzzle: Fu[Result] =
@@ -280,7 +434,7 @@ final class Puzzle(env: Env, apiC: => Api) extends LilaController(env):
     env.puzzle.api.angles.flatMap: angles =>
       negotiate(
         html = Ok.page(views.html.puzzle.theme.list(angles)),
-        json = Ok(lila.puzzle.JsonView.angles(angles))
+        json = Ok(lila.puzzle.JsonView.angles(angles)).pp
       )
 
   def openings(order: String) = Open:

@@ -9,13 +9,24 @@ sealed abstract class PuzzleAngle(val key: String):
   def description: I18nKey
   def asTheme: Option[PuzzleTheme.Key]
   def opening: Option[Opening]
+  def rating: Option[IntRating]
 
 object PuzzleAngle:
+
   case class Theme(theme: PuzzleTheme.Key) extends PuzzleAngle(theme.value):
     val name        = PuzzleTheme(theme).name
     val description = PuzzleTheme(theme).description
     def asTheme     = theme.some
     def opening     = none
+    def rating = none
+
+  case class RatedTheme(theme: PuzzleTheme.Key, givenRating: IntRating) extends PuzzleAngle(theme.value):
+    val name        = PuzzleTheme(theme).name
+    val description = PuzzleTheme(theme).description
+    def asTheme     = theme.some
+    def opening     = none
+    def rating = givenRating.some
+
   case class Opening(either: Either[LilaOpeningFamily.Key, SimpleOpening.Key])
       extends PuzzleAngle(either.fold(_.value, _.value)):
     def openingName = either.fold(
@@ -30,9 +41,11 @@ object PuzzleAngle:
     val name        = I18nKey(openingName)
     def description = I18nKey(s"From games with the opening: $openingName")
     def asTheme     = none
+    def rating = none
 
   // def apply(theme: PuzzleTheme.Key): PuzzleAngle = Theme(theme)
   def apply(theme: PuzzleTheme): PuzzleAngle = Theme(theme.key)
+  def apply(theme: PuzzleTheme, rating: IntRating): PuzzleAngle = RatedTheme(theme.key, rating)
   // def apply(opening: SimpleOpening.Key): PuzzleAngle = Opening(opening)
   def apply(family: LilaOpeningFamily): PuzzleAngle = Opening(Left(family.key))
   def apply(opening: SimpleOpening): PuzzleAngle    = Opening(Right(opening.key))
@@ -54,3 +67,4 @@ object PuzzleAngle:
   )
 
   given Iso.StringIso[PuzzleAngle] = lila.common.Iso.string(findOrMix, _.key)
+

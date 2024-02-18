@@ -87,12 +87,12 @@ final class PuzzleDashboardApi(
 
   import PuzzleDashboard.*
 
-  def apply(u: User, days: Days): Fu[Option[PuzzleDashboard]] = cache.get(u.id -> days)
+  def apply(u: User, days: Days): Fu[Option[PuzzleDashboard]] = pp(cache.get(u.id -> days))
 
   private val cache =
     cacheApi[(UserId, Days), Option[PuzzleDashboard]](1024, "puzzle.dashboard") {
       _.expireAfterWrite(10 seconds).buildAsyncFuture { case (userId, days) =>
-        compute(userId, days)
+        pp(compute(userId, days))
       }
     }
 

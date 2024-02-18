@@ -31,6 +31,7 @@ final private class PuzzlePathApi(colls: PuzzleColls)(using Executor):
       previousPaths: Set[Id],
       compromise: Int = 0
   )(using me: Me, perf: Perf): Fu[Option[Id]] = {
+    println(s"nextFor ${angle} ${tier} ${difficulty} ${previousPaths} ${compromise}")
     val actualTier =
       if tier == PuzzleTier.top && PuzzleDifficulty.isExtreme(difficulty)
       then PuzzleTier.good
@@ -39,7 +40,7 @@ final private class PuzzlePathApi(colls: PuzzleColls)(using Executor):
       .path:
         _.aggregateOne(): framework =>
           import framework.*
-          val rating     = perf.glicko.intRating + difficulty.ratingDelta
+          val rating     = angle.rating.getOrElse(perf.glicko.intRating) + difficulty.ratingDelta
           val ratingFlex = (100 + math.abs(1500 - rating.value) / 4) * compromise.atMost(4)
           Match(
             select(angle, actualTier, (rating - ratingFlex).value to (rating + ratingFlex).value) ++

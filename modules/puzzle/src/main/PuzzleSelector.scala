@@ -56,9 +56,9 @@ final class PuzzleSelector(
           mon.ratingDev(angle.key).record(puzzle.glicko.intDeviation)
           mon.tier(session.path.tier.key, angle.key, session.settings.difficulty.key).increment()
           puzzle
-
+        println(s"stuck bruh: ${session} ${retries}")
         nextPuzzleResult(session).flatMap:
-          case PathMissing | PathEnded if retries < 10 => switchPath(retries)(session.path.tier)
+          case PathMissing | PathEnded if pp(retries) < 10 => switchPath(retries)(session.path.tier)
           case PathMissing => fufail(s"Puzzle path missing for ${me.username} $session")
           case PathEnded   => fufail(s"Puzzle path ended for ${me.username} $session")
           case PuzzleMissing(id) =>
@@ -83,7 +83,7 @@ final class PuzzleSelector(
       .path:
         _.aggregateOne(): framework =>
           import framework.*
-          Match($id(session.path)) -> List(
+          Match($id(session.path pp)) -> List(
             // get the puzzle ID from session position
             Project($doc("puzzleId" -> $doc("$arrayElemAt" -> $arr("$ids", session.positionInPath)))),
             Project:
